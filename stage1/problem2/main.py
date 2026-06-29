@@ -15,7 +15,7 @@ try:
             "event":parts[1],
             "message":parts[2].strip()
             })
-    json.dumps()
+   
     with open("mission_computer_main.json","w") as f:
         json.dump(dictList,f,indent=4)
 except FileNotFoundError:
