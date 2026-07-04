@@ -35,7 +35,3 @@ try:
 
 except FileNotFoundError:
     print("파일을 찾을 수 없습니다. 다시 확인하세요")
-
-
-
-#sort 함수가 정렬하는 함수였던 거 같은데... 

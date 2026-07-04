@@ -26,3 +26,4 @@ except Exception as e:
     print(f"오류 발생: {e}")
 
 print(logList)
+print("자료형 :",type(logList))
