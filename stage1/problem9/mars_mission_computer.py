@@ -1,6 +1,3 @@
-"""Mars mission computer that reports sensor data and system status
-using multi-threading and multi-processing."""
-
 import json
 import multiprocessing
 import os
