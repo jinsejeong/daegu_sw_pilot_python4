@@ -42,3 +42,4 @@ class DummySensor: # 마치 붕어빵 틀과 같음
 ds = DummySensor()
 ds.set_env()
 print(ds.get_env())
+
