@@ -19,6 +19,23 @@ st.markdown(
         background: linear-gradient(180deg, #F3FAF9 0%, #FFFFFF 35%);
     }
 
+    /* 상단 메뉴바 */
+    .heatway-navbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px 4px;
+        margin-bottom: 14px;
+    }
+    .heatway-navbar .brand {
+        font-size: 1.15rem;
+        font-weight: 800;
+        color: #256F8D;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
     /* 히어로 헤더 */
     .heatway-hero {
         background: linear-gradient(120deg, #3AAFA9 0%, #2E86AB 100%);
@@ -38,21 +55,35 @@ st.markdown(
         font-size: 1rem;
     }
 
-    /* 버튼 */
-    .stButton>button {
-        background: linear-gradient(120deg, #3AAFA9 0%, #2E86AB 100%);
-        color: white;
-        border-radius: 999px;
+    /* 버튼 - 기본(주요 CTA: 쉼터 찾기) */
+    button[kind="primary"] {
+        background: linear-gradient(120deg, #3AAFA9 0%, #2E86AB 100%) !important;
+        color: white !important;
+        border-radius: 999px !important;
         height: 3em;
-        font-weight: 700;
-        border: none;
+        font-weight: 700 !important;
+        border: none !important;
         box-shadow: 0 4px 14px rgba(46, 134, 171, 0.25);
         transition: transform 0.15s ease;
     }
-    .stButton>button:hover {
+    button[kind="primary"]:hover {
         transform: translateY(-1px);
-        background: linear-gradient(120deg, #2E9C96 0%, #256F8D 100%);
-        color: white;
+        background: linear-gradient(120deg, #2E9C96 0%, #256F8D 100%) !important;
+        color: white !important;
+    }
+
+    /* 버튼 - 보조(홈 버튼 등) */
+    button[kind="secondary"] {
+        background: white !important;
+        color: #2E86AB !important;
+        border: 1.5px solid #BFE3E0 !important;
+        border-radius: 999px !important;
+        font-weight: 600 !important;
+        box-shadow: none !important;
+    }
+    button[kind="secondary"]:hover {
+        background: #EAF7F6 !important;
+        color: #256F8D !important;
     }
 
     /* 결과 요약 캡션 */
@@ -126,6 +157,25 @@ def load_shelters():
 
 df = load_shelters()
 
+# ---------- 세션 상태 초기화 ----------
+if "results" not in st.session_state:
+    st.session_state.results = None
+    st.session_state.search_region = None
+    st.session_state.search_time_str = None
+
+# ---------- 상단 메뉴바 ----------
+nav_left, nav_right = st.columns([4, 1])
+with nav_left:
+    st.markdown('<div class="heatway-navbar"><span class="brand">🌤️ 더위쉼표</span></div>', unsafe_allow_html=True)
+with nav_right:
+    home_clicked = st.button("🏠 홈", type="secondary", key="home_btn", use_container_width=True)
+
+if home_clicked:
+    st.session_state.results = None
+    st.session_state.search_region = None
+    st.session_state.search_time_str = None
+    st.rerun()
+
 # ---------- 헤더 ----------
 st.markdown(
     """
@@ -164,7 +214,14 @@ st.divider()
 # ---------- 결과 ----------
 if search_clicked:
     time_str = input_time.strftime("%H:%M")
-    results = recommend_shelters(df, region, time_str, activity_type, top_n=10)
+    st.session_state.results = recommend_shelters(df, region, time_str, activity_type, top_n=10)
+    st.session_state.search_region = region
+    st.session_state.search_time_str = time_str
+
+if st.session_state.results is not None:
+    results = st.session_state.results
+    region = st.session_state.search_region
+    time_str = st.session_state.search_time_str
 
     # 엣지케이스 1: 지역 내 쉼터 자체가 없는 경우
     if results.empty:
@@ -190,23 +247,59 @@ if search_clicked:
 
         # ---------- 지도 ----------
         center_lat, center_lng = REGION_CENTER.get(region, (35.8714, 128.6014))
-        m = folium.Map(location=[center_lat, center_lng], zoom_start=13)
+        m = folium.Map(
+            location=[center_lat, center_lng],
+            zoom_start=13,
+            tiles="CartoDB positron",  # 더 깔끔하고 밝은 베이스맵
+        )
 
-        color_map = {"available": "green", "closing_soon": "orange", "unavailable": "gray"}
+        # 브랜드 컬러 기반 상태별 색상 (마커/팝업 공통)
+        STATUS_COLOR = {
+            "available": "#2E9C96",     # 브랜드 틸(메인 컬러)
+            "closing_soon": "#E8A93D",  # 앰버
+            "unavailable": "#E4572E",   # 레드
+        }
 
         for _, row in results.iterrows():
             lat, lng = jitter_coords(region, row["shelter_id"])
+            color = STATUS_COLOR.get(row["availability"], "#9CA3AF")
+
+            # 브랜드 컬러의 커스텀 원형 마커 (DivIcon)
+            marker_html = f"""
+                <div style="
+                    width: 18px; height: 18px;
+                    background: {color};
+                    border: 3px solid white;
+                    border-radius: 50%;
+                    box-shadow: 0 2px 6px rgba(0,0,0,0.35);
+                "></div>
+            """
+
+            # 팝업: 상태색 테두리를 가진 미니 카드
+            popup_html = f"""
+                <div style="
+                    border-left: 4px solid {color};
+                    padding: 6px 10px;
+                    font-family: sans-serif;
+                    min-width: 160px;
+                ">
+                    <div style="font-weight:700; font-size:0.95rem; margin-bottom:2px;">{row['name']}</div>
+                    <div style="color:{color}; font-size:0.85rem; font-weight:600;">{row['status_label']}</div>
+                </div>
+            """
+
             folium.Marker(
                 location=[lat, lng],
-                popup=f"{row['name']} ({row['status_label']})",
                 tooltip=row["name"],
-                icon=folium.Icon(color=color_map.get(row["availability"], "blue")),
+                popup=folium.Popup(popup_html, max_width=220),
+                icon=folium.DivIcon(html=marker_html),
             ).add_to(m)
 
         # st_folium 대신 folium_static 사용 (버전 호환성 이슈 회피)
-        folium_static(m, width=700, height=400)
+        folium_static(m, width=700, height=420)
         st.caption(
-            "⚠️ 지도상 위치는 실제 주소가 아닌 지역 내 임의 배치입니다 (샘플 데이터 특성상 좌표 미포함)."
+            "⚠️ 지도상 위치는 실제 주소가 아닌 지역 내 임의 배치입니다 (샘플 데이터 특성상 좌표 미포함). "
+            "핀 색상 · 팝업 테두리는 이용 가능 여부를 나타냅니다 (틸=가능 / 주황=곧마감 / 빨강=불가)."
         )
 
         # ---------- 카드 리스트 ----------
@@ -230,7 +323,7 @@ else:
     st.markdown(
         """
         <div class="heatway-empty">
-            <div class="icon">🌿</div>
+            <div class="icon"></div>
             지역, 시간, 활동유형을 선택하고<br>'쉼터 찾기'를 눌러주세요.
         </div>
         """,
