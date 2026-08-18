@@ -99,6 +99,23 @@ def recommend_shelters(
     return result.head(top_n).reset_index(drop=True)
 
 
+def annotate_availability(df: pd.DataFrame, input_time_str: str) -> pd.DataFrame:
+    """
+    지역 필터 없이 전체 쉼터에 이용 가능 여부만 부여한다.
+    "전체 쉼터 보기" 화면처럼 필터링 없이 전체를 보여줄 때 사용.
+    """
+    input_time = _parse_time(input_time_str)
+    result = df.copy()
+    result["availability"] = result.apply(
+        lambda row: _get_availability(
+            input_time, _parse_time(row["open_time"]), _parse_time(row["close_time"])
+        ),
+        axis=1,
+    )
+    result["status_label"] = result["availability"].map(STATUS_LABEL)
+    return result
+
+
 def generate_guide_text(row: pd.Series) -> str:
     """AI 없이 템플릿 기반 안내 문구 생성 (F2 축소판)"""
     status = row["status_label"]
