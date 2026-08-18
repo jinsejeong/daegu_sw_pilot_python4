@@ -11,6 +11,7 @@ from geo import jitter_coords, REGION_CENTER
 from ai_guide import generate_ai_guide_text, _ANTHROPIC_AVAILABLE
 
 LOGO_PATH = Path(__file__).parent / "logo.png"
+LOGO_WHITE_PATH = Path(__file__).parent / "logo_white.png"
 
 # set_page_config는 반드시 스크립트에서 가장 먼저 실행되는 Streamlit 명령이어야 함
 st.set_page_config(
@@ -25,7 +26,13 @@ def get_logo_base64():
     return base64.b64encode(LOGO_PATH.read_bytes()).decode()
 
 
+@st.cache_data
+def get_logo_white_base64():
+    return base64.b64encode(LOGO_WHITE_PATH.read_bytes()).decode()
+
+
 LOGO_B64 = get_logo_base64()
+LOGO_WHITE_B64 = get_logo_white_base64()
 
 # ---------- 스타일 ----------
 st.markdown(
@@ -40,7 +47,6 @@ st.markdown(
     .heatway-topbar {
         display: flex;
         align-items: center;
-        justify-content: space-between;
         padding: 4px 0 12px 0;
     }
     .heatway-topbar .brand {
@@ -52,10 +58,29 @@ st.markdown(
         gap: 8px;
     }
     .heatway-topbar .brand img {
-        height: 30px;
-        width: 30px;
+        height: 44px;
+        width: 44px;
         object-fit: contain;
     }
+
+    /* 햄버거 버튼 - 클로드 메뉴바처럼 아이콘형, 왼쪽 상단에 붙는 스타일 */
+    .st-key-hamburger_btn button {
+        background: transparent !important;
+        border: none !important;
+        color: #374151 !important;
+        font-size: 1.4rem !important;
+        width: 42px !important;
+        height: 42px !important;
+        min-height: 42px !important;
+        padding: 0 !important;
+        border-radius: 10px !important;
+        box-shadow: none !important;
+    }
+    .st-key-hamburger_btn button:hover {
+        background: #EAF7F6 !important;
+        color: #256F8D !important;
+    }
+
     .heatway-menu-panel {
         background: linear-gradient(180deg, #EAF7F6 0%, #F7FBFB 100%);
         border-radius: 16px;
@@ -74,19 +99,16 @@ st.markdown(
     }
     .heatway-hero h1 {
         color: white;
-        font-size: 1.8rem;
+        font-size: 2.1rem;
         margin: 0 0 4px 0;
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 14px;
     }
     .heatway-hero h1 img {
-        height: 40px;
-        width: 40px;
+        height: 76px;
+        width: 76px;
         object-fit: contain;
-        background: white;
-        border-radius: 10px;
-        padding: 4px;
     }
     .heatway-hero p {
         color: rgba(255,255,255,0.9);
@@ -289,16 +311,16 @@ if "view" not in st.session_state:
 if "menu_open" not in st.session_state:
     st.session_state.menu_open = False
 
-# ---------- 상단 바: 브랜드 + 햄버거 토글 ----------
-top_left, top_right = st.columns([5, 1])
-with top_left:
+# ---------- 상단 바: 햄버거 토글 + 브랜드 (왼쪽 정렬, 클로드 메뉴바 스타일) ----------
+top_hamburger, top_brand, top_spacer = st.columns([0.8, 3, 4])
+with top_hamburger:
+    hamburger_clicked = st.button("☰", key="hamburger_btn")
+with top_brand:
     st.markdown(
         f'<div class="heatway-topbar"><span class="brand">'
         f'<img src="data:image/png;base64,{LOGO_B64}" alt="더위쉼표 로고"/>더위쉼표</span></div>',
         unsafe_allow_html=True,
     )
-with top_right:
-    hamburger_clicked = st.button("☰", key="hamburger_btn", use_container_width=True)
 
 if hamburger_clicked:
     st.session_state.menu_open = not st.session_state.menu_open
@@ -387,7 +409,7 @@ else:
     st.markdown(
         f"""
         <div class="heatway-hero">
-            <h1><img src="data:image/png;base64,{LOGO_B64}" alt="더위쉼표 로고"/>더위쉼표</h1>
+            <h1><img src="data:image/png;base64,{LOGO_WHITE_B64}" alt="더위쉼표 로고"/>더위쉼표</h1>
             <p>더위로부터, 잠시 멀어지세요</p>
         </div>
         """,
