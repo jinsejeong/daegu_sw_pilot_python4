@@ -119,17 +119,11 @@ st.markdown(
         cursor: pointer;
     }
 
-    /* 햄버거 버튼 - 화면(뷰포트) 진짜 왼쪽 상단 모서리에 고정, 클로드 메뉴바처럼 */
-    .st-key-hamburger_btn {
-        position: fixed !important;
-        top: 14px !important;
-        left: 14px !important;
-        z-index: 9999 !important;
-        width: auto !important;
-    }
+    /* 햄버거 버튼 - 화면 흐름 안에서 왼쪽 위에 배치 (position:fixed는 Streamlit 자체
+       상단 툴바와 겹쳐 가려지는 버전이 있어 제거, 대신 항상 확실히 보이는 방식으로) */
     .st-key-hamburger_btn button {
         background: rgba(255,255,255,0.9) !important;
-        border: none !important;
+        border: 1px solid #D6E9FC !important;
         color: #374151 !important;
         font-size: 1.4rem !important;
         width: 42px !important;
@@ -361,13 +355,21 @@ if "view" not in st.session_state:
 if "menu_open" not in st.session_state:
     st.session_state.menu_open = False
 
-# ---------- 상단 바: 브랜드 (클릭하면 홈으로) ----------
+# ---------- 상단 바: 햄버거 토글 + 브랜드 (클릭하면 홈으로) ----------
+top_ham_col, top_brand_col = st.columns([0.8, 5])
+
+with top_ham_col:
+    hamburger_clicked = st.button("☰", key="hamburger_btn")
+
+if hamburger_clicked:
+    st.session_state.menu_open = not st.session_state.menu_open
+
 # st.container(key=...)는 최신 Streamlit(1.32+)에서만 지원됨.
 # 구버전 호환을 위해 지원 안 되면 일반 컨테이너로 조용히 폴백 (로고 클릭 기능만 비활성화됨)
 try:
-    _brand_container = st.container(key="brand_home_area")
+    _brand_container = top_brand_col.container(key="brand_home_area")
 except TypeError:
-    _brand_container = st.container()
+    _brand_container = top_brand_col.container()
 
 with _brand_container:
     st.markdown(
@@ -376,12 +378,6 @@ with _brand_container:
         unsafe_allow_html=True,
     )
     brand_clicked = st.button("더위쉼표 홈으로", key="brand_home_btn")
-
-# ---------- 햄버거 토글: 화면 진짜 왼쪽 상단 모서리에 고정 ----------
-hamburger_clicked = st.button("☰", key="hamburger_btn")
-
-if hamburger_clicked:
-    st.session_state.menu_open = not st.session_state.menu_open
 
 home_clicked = info_clicked = all_clicked = False
 
