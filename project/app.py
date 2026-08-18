@@ -14,20 +14,104 @@ st.set_page_config(page_title="더위쉼표", page_icon="🌤️", layout="cente
 st.markdown(
     """
     <style>
-    .stButton>button {
-        background-color: #2E86AB;
+    /* 전체 배경 - 은은한 민트/스카이 그라데이션 */
+    .stApp {
+        background: linear-gradient(180deg, #F3FAF9 0%, #FFFFFF 35%);
+    }
+
+    /* 히어로 헤더 */
+    .heatway-hero {
+        background: linear-gradient(120deg, #3AAFA9 0%, #2E86AB 100%);
+        border-radius: 20px;
+        padding: 28px 24px;
+        margin-bottom: 12px;
+        box-shadow: 0 8px 24px rgba(46, 134, 171, 0.18);
+    }
+    .heatway-hero h1 {
         color: white;
-        border-radius: 10px;
+        font-size: 1.8rem;
+        margin: 0 0 4px 0;
+    }
+    .heatway-hero p {
+        color: rgba(255,255,255,0.9);
+        margin: 0;
+        font-size: 1rem;
+    }
+
+    /* 버튼 */
+    .stButton>button {
+        background: linear-gradient(120deg, #3AAFA9 0%, #2E86AB 100%);
+        color: white;
+        border-radius: 999px;
         height: 3em;
-        font-weight: 600;
+        font-weight: 700;
         border: none;
+        box-shadow: 0 4px 14px rgba(46, 134, 171, 0.25);
+        transition: transform 0.15s ease;
     }
     .stButton>button:hover {
-        background-color: #1f5f7a;
+        transform: translateY(-1px);
+        background: linear-gradient(120deg, #2E9C96 0%, #256F8D 100%);
         color: white;
     }
-    div[data-testid="stVerticalBlockBorderWrapper"] {
+
+    /* 결과 요약 캡션 */
+    .heatway-summary {
+        background: #EAF7F6;
         border-radius: 12px;
+        padding: 10px 16px;
+        color: #1f5f5c;
+        font-size: 0.92rem;
+        margin-bottom: 14px;
+    }
+
+    /* 쉼터 카드 */
+    .heatway-card {
+        border-radius: 14px;
+        padding: 16px 18px;
+        margin-bottom: 12px;
+        background: #FFFFFF;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+    }
+    .heatway-card.status-available { border-left: 5px solid #2FAE7A; }
+    .heatway-card.status-closing_soon { border-left: 5px solid #E8A93D; }
+    .heatway-card.status-unavailable { border-left: 5px solid #B0B7BD; }
+
+    .heatway-card .card-title {
+        font-size: 1.05rem;
+        font-weight: 700;
+        margin-bottom: 6px;
+        color: #1F2937;
+    }
+    .heatway-card .card-meta {
+        color: #4B5563;
+        font-size: 0.9rem;
+        margin: 2px 0;
+    }
+    .heatway-card .card-guide {
+        margin-top: 10px;
+        background: #F3FAF9;
+        border-radius: 10px;
+        padding: 10px 12px;
+        color: #1f5f5c;
+        font-size: 0.9rem;
+        line-height: 1.5;
+    }
+
+    /* 빈 상태 안내 */
+    .heatway-empty {
+        text-align: center;
+        padding: 40px 20px;
+        color: #6B7280;
+    }
+    .heatway-empty .icon { font-size: 2.4rem; margin-bottom: 8px; }
+
+    /* 하단 캡션 */
+    .heatway-footer {
+        color: #9CA3AF;
+        font-size: 0.78rem;
+        text-align: center;
+        margin-top: 8px;
     }
     </style>
     """,
@@ -43,16 +127,30 @@ def load_shelters():
 df = load_shelters()
 
 # ---------- 헤더 ----------
-st.title("🌤️ 더위쉼표")
-st.markdown("##### 더위로부터, 잠시 멀어지세요")
-st.divider()
+st.markdown(
+    """
+    <div class="heatway-hero">
+        <h1>🌤️ 더위쉼표</h1>
+        <p>더위로부터, 잠시 멀어지세요</p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 # ---------- 입력 ----------
 col1, col2 = st.columns(2)
 with col1:
     region = st.selectbox("📍 지역", sorted(df["region"].unique()))
 with col2:
-    input_time = st.time_input("🕐 방문 예정 시간", value=datetime.now().time())
+    # 기본값을 세션에 한 번만 저장 (매 rerun마다 datetime.now()가 재계산되어
+    # 사용자가 고른 시간을 덮어쓰는 문제 방지)
+    if "default_time" not in st.session_state:
+        st.session_state.default_time = datetime.now().time()
+    input_time = st.time_input(
+        "🕐 방문 예정 시간",
+        value=st.session_state.default_time,
+        key="visit_time",
+    )
 
 activity_type = st.selectbox(
     "🚶 활동유형",
@@ -85,7 +183,10 @@ if search_clicked:
             )
         else:
             st.subheader(f"{region} 무더위쉼터 ({time_str} 기준)")
-            st.caption(f"지금 이용 가능한 곳 {n_available}곳을 포함해 총 {len(results)}곳을 찾았어요.")
+            st.markdown(
+                f'<div class="heatway-summary">🟢 지금 이용 가능한 곳 {n_available}곳을 포함해 총 {len(results)}곳을 찾았어요.</div>',
+                unsafe_allow_html=True,
+            )
 
         # ---------- 지도 ----------
         center_lat, center_lng = REGION_CENTER.get(region, (35.8714, 128.6014))
@@ -110,25 +211,42 @@ if search_clicked:
 
         # ---------- 카드 리스트 ----------
         for _, row in results.iterrows():
-            with st.container(border=True):
-                st.markdown(f"**{row['status_label']}  ·  {row['name']}**")
-                st.write(f"📮 {row['address']}")
-                st.write(
-                    f"🕐 운영시간 {row['open_time']}~{row['close_time']}"
-                    + ("  ·  🌙 야간개방" if row["is_night_open"] == "Y" else "")
-                )
-                st.write(
-                    f"❄️ 에어컨 {row['ac_count']}대 · 선풍기 {row['fan_count']}대 · 수용 {row['capacity']}명"
-                )
-                st.info(generate_ai_guide_text(row))
+            night_badge = " · 🌙 야간개방" if row["is_night_open"] == "Y" else ""
+            guide_text = generate_ai_guide_text(row)
+            st.markdown(
+                f"""
+                <div class="heatway-card status-{row['availability']}">
+                    <div class="card-title">{row['status_label']} · {row['name']}</div>
+                    <div class="card-meta">📮 {row['address']}</div>
+                    <div class="card-meta">🕐 운영시간 {row['open_time']}~{row['close_time']}{night_badge}</div>
+                    <div class="card-meta">❄️ 에어컨 {row['ac_count']}대 · 선풍기 {row['fan_count']}대 · 수용 {row['capacity']}명</div>
+                    <div class="card-guide">{guide_text}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
 else:
-    st.info("지역, 시간, 활동유형을 선택하고 '쉼터 찾기'를 눌러주세요.")
+    st.markdown(
+        """
+        <div class="heatway-empty">
+            <div class="icon">🌿</div>
+            지역, 시간, 활동유형을 선택하고<br>'쉼터 찾기'를 눌러주세요.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 # ---------- 하단 안내 ----------
 st.divider()
 ai_status = "Claude API 연동됨" if _ANTHROPIC_AVAILABLE else "템플릿 문구 사용 중 (ANTHROPIC_API_KEY 미설정)"
-st.caption(
-    f"ℹ️ 데모 버전 안내: 쉼터 데이터는 실제 서비스 스키마를 기반으로 한 샘플입니다. "
-    f"실제 서비스에서는 행정안전부 무더위쉼터 표준데이터(data.go.kr)와 연동됩니다. · 안내문구: {ai_status}"
+st.markdown(
+    f"""
+    <div class="heatway-footer">
+        ℹ️ 데모 버전 안내: 쉼터 데이터는 실제 서비스 스키마를 기반으로 한 샘플입니다.
+        실제 서비스에서는 행정안전부 무더위쉼터 표준데이터(data.go.kr)와 연동됩니다.<br>
+        안내문구 생성: {ai_status}
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
