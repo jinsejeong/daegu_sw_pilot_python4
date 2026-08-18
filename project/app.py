@@ -12,6 +12,13 @@ from ai_guide import generate_ai_guide_text, _ANTHROPIC_AVAILABLE
 
 LOGO_PATH = Path(__file__).parent / "logo.png"
 
+# set_page_config는 반드시 스크립트에서 가장 먼저 실행되는 Streamlit 명령이어야 함
+st.set_page_config(
+    page_title="더위쉼표",
+    page_icon=str(LOGO_PATH),
+    layout="centered",
+)
+
 
 @st.cache_data
 def get_logo_base64():
@@ -19,12 +26,6 @@ def get_logo_base64():
 
 
 LOGO_B64 = get_logo_base64()
-
-st.set_page_config(
-    page_title="더위쉼표",
-    page_icon=str(LOGO_PATH),
-    layout="centered",
-)
 
 # ---------- 스타일 ----------
 st.markdown(
