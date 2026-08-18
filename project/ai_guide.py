@@ -27,9 +27,11 @@ def generate_ai_guide_text(row) -> str:
     if not _ANTHROPIC_AVAILABLE:
         return _template_guide_text(row)
 
+    distance_line = f"거리: {row['distance_label']}\n" if "distance_label" in row and row["distance_label"] else ""
     facts = (
         f"쉼터명: {row['name']}\n"
         f"주소: {row['address']}\n"
+        f"{distance_line}"
         f"운영시간: {row['open_time']}~{row['close_time']}\n"
         f"현재 상태: {row['status_label']}\n"
         f"에어컨 {row['ac_count']}대, 선풍기 {row['fan_count']}대, 수용인원 {row['capacity']}명"

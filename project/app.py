@@ -2,13 +2,44 @@ import streamlit as st
 import pandas as pd
 import folium
 import base64
+import os
+import requests
 from pathlib import Path
 from streamlit_folium import folium_static
 from datetime import datetime
+from dotenv import load_dotenv
+
+load_dotenv()  # .env 파일에서 SHELTER_API_KEY, ANTHROPIC_API_KEY 등을 읽어옴
+               # (아래 로컬 모듈들이 import 시점에 환경변수를 읽으므로 반드시 그 전에 호출)
 
 from matching import recommend_shelters, annotate_availability
 from geo import jitter_coords, REGION_CENTER
 from ai_guide import generate_ai_guide_text, _ANTHROPIC_AVAILABLE
+from shelter_api import load_shelters as load_shelters_api
+
+BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8000")
+
+
+def call_backend_recommend(region: str, time_str: str, activity_type: str, top_n: int = 10):
+    """
+    FastAPI 백엔드(SIR-002)를 통해 추천 결과를 받는다.
+    백엔드가 꺼져 있거나 응답이 없으면 None을 반환 (호출부에서 로컬 직접호출로 폴백).
+    """
+    try:
+        resp = requests.post(
+            f"{BACKEND_URL}/recommend",
+            json={"region": region, "time": time_str, "activity_type": activity_type, "top_n": top_n},
+            timeout=3,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if not data["results"]:
+            return pd.DataFrame(), data.get("expanded", False), data.get("base_radius_km", 0), data.get("using_real_api", False)
+
+        df = pd.DataFrame(data["results"])
+        return df, data["expanded"], data["base_radius_km"], data["using_real_api"]
+    except Exception:
+        return None
 
 LOGO_PATH = Path(__file__).parent / "logo.png"
 LOGO_WHITE_PATH = Path(__file__).parent / "logo_white.png"
@@ -38,9 +69,9 @@ LOGO_WHITE_B64 = get_logo_white_base64()
 st.markdown(
     """
     <style>
-    /* 전체 배경 - 은은한 민트/스카이 그라데이션 */
+    /* 전체 배경 - 로고 블루 톤의 아주 은은한 화이티쉬 그라데이션 */
     .stApp {
-        background: linear-gradient(180deg, #F3FAF9 0%, #FFFFFF 35%);
+        background: linear-gradient(180deg, #F4F8FE 0%, #FFFFFF 35%);
     }
 
     /* 햄버거 토글 메뉴 */
@@ -52,7 +83,7 @@ st.markdown(
     .heatway-topbar .brand {
         font-size: 1.15rem;
         font-weight: 800;
-        color: #256F8D;
+        color: #2E6BB0;
         display: flex;
         align-items: center;
         gap: 8px;
@@ -63,9 +94,41 @@ st.markdown(
         object-fit: contain;
     }
 
-    /* 햄버거 버튼 - 클로드 메뉴바처럼 아이콘형, 왼쪽 상단에 붙는 스타일 */
-    .st-key-hamburger_btn button {
+    /* 브랜드(로고+텍스트) 클릭 시 홈으로: 보이는 HTML 위에 투명 버튼을 겹쳐서 클릭을 받는다 */
+    .st-key-brand_home_area {
+        position: relative;
+        cursor: pointer;
+        width: fit-content;
+    }
+    .st-key-brand_home_area .heatway-topbar {
+        pointer-events: none; /* 시각 요소는 클릭을 통과시키고 아래 버튼이 받도록 */
+    }
+    .st-key-brand_home_area .st-key-brand_home_btn {
+        position: absolute;
+        inset: 0;
+        z-index: 10;
+    }
+    .st-key-brand_home_area .st-key-brand_home_btn button {
+        width: 100%;
+        height: 100%;
+        opacity: 0;
+        border: none !important;
         background: transparent !important;
+        box-shadow: none !important;
+        padding: 0 !important;
+        cursor: pointer;
+    }
+
+    /* 햄버거 버튼 - 화면(뷰포트) 진짜 왼쪽 상단 모서리에 고정, 클로드 메뉴바처럼 */
+    .st-key-hamburger_btn {
+        position: fixed !important;
+        top: 14px !important;
+        left: 14px !important;
+        z-index: 9999 !important;
+        width: auto !important;
+    }
+    .st-key-hamburger_btn button {
+        background: rgba(255,255,255,0.9) !important;
         border: none !important;
         color: #374151 !important;
         font-size: 1.4rem !important;
@@ -74,28 +137,20 @@ st.markdown(
         min-height: 42px !important;
         padding: 0 !important;
         border-radius: 10px !important;
-        box-shadow: none !important;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08) !important;
     }
     .st-key-hamburger_btn button:hover {
-        background: #EAF7F6 !important;
-        color: #256F8D !important;
+        background: #EAF2FE !important;
+        color: #2E6BB0 !important;
     }
 
-    .heatway-menu-panel {
-        background: linear-gradient(180deg, #EAF7F6 0%, #F7FBFB 100%);
-        border-radius: 16px;
-        padding: 14px;
-        margin-bottom: 16px;
-        box-shadow: 0 4px 16px rgba(0,0,0,0.06);
-    }
-
-    /* 히어로 헤더 */
+    /* 히어로 헤더 - 로고 블루를 화이티쉬하게 톤다운한 그라데이션 */
     .heatway-hero {
-        background: linear-gradient(120deg, #3AAFA9 0%, #2E86AB 100%);
+        background: linear-gradient(120deg, #6FAEF2 0%, #4897EC 100%);
         border-radius: 20px;
         padding: 28px 24px;
         margin-bottom: 12px;
-        box-shadow: 0 8px 24px rgba(46, 134, 171, 0.18);
+        box-shadow: 0 8px 24px rgba(72, 151, 236, 0.2);
     }
     .heatway-hero h1 {
         color: white;
@@ -116,41 +171,41 @@ st.markdown(
         font-size: 1rem;
     }
 
-    /* 버튼 - 기본(주요 CTA: 쉼터 찾기) */
+    /* 버튼 - 기본(주요 CTA: 쉼터 찾기) - 로고 블루 */
     button[kind="primary"] {
-        background: linear-gradient(120deg, #3AAFA9 0%, #2E86AB 100%) !important;
+        background: linear-gradient(120deg, #6FAEF2 0%, #4897EC 100%) !important;
         color: white !important;
         border-radius: 999px !important;
         height: 3em;
         font-weight: 700 !important;
         border: none !important;
-        box-shadow: 0 4px 14px rgba(46, 134, 171, 0.25);
+        box-shadow: 0 4px 14px rgba(72, 151, 236, 0.3);
         transition: transform 0.15s ease;
     }
     button[kind="primary"]:hover {
         transform: translateY(-1px);
-        background: linear-gradient(120deg, #2E9C96 0%, #256F8D 100%) !important;
+        background: linear-gradient(120deg, #4897EC 0%, #2E6BB0 100%) !important;
         color: white !important;
     }
 
     /* 버튼 - 보조(홈 버튼 등) */
     button[kind="secondary"] {
         background: white !important;
-        color: #2E86AB !important;
-        border: 1.5px solid #BFE3E0 !important;
+        color: #4897EC !important;
+        border: 1.5px solid #D6E9FC !important;
         border-radius: 999px !important;
         font-weight: 600 !important;
         box-shadow: none !important;
     }
     button[kind="secondary"]:hover {
-        background: #EAF7F6 !important;
-        color: #256F8D !important;
+        background: #EAF2FE !important;
+        color: #2E6BB0 !important;
     }
     .heatway-summary {
-        background: #EAF7F6;
+        background: #EAF2FE;
         border-radius: 12px;
         padding: 10px 16px;
-        color: #1f5f5c;
+        color: #2E6BB0;
         font-size: 0.92rem;
         margin-bottom: 14px;
     }
@@ -180,10 +235,10 @@ st.markdown(
     }
     .heatway-card .card-guide {
         margin-top: 10px;
-        background: #F3FAF9;
+        background: #EAF2FE;
         border-radius: 10px;
         padding: 10px 12px;
-        color: #1f5f5c;
+        color: #2E6BB0;
         font-size: 0.9rem;
         line-height: 1.5;
     }
@@ -213,7 +268,7 @@ st.markdown(
         margin-bottom: 16px;
     }
     .heatway-panel h3 {
-        color: #256F8D;
+        color: #2E6BB0;
         margin-top: 0;
     }
     .heatway-step {
@@ -223,7 +278,7 @@ st.markdown(
         margin-bottom: 14px;
     }
     .heatway-step .num {
-        background: linear-gradient(120deg, #3AAFA9 0%, #2E86AB 100%);
+        background: linear-gradient(120deg, #6FAEF2 0%, #4897EC 100%);
         color: white;
         width: 28px; height: 28px;
         border-radius: 50%;
@@ -260,13 +315,13 @@ def build_shelter_map(rows_df, center_lat, center_lng, zoom_start=13, map_height
     m = folium.Map(location=[center_lat, center_lng], zoom_start=zoom_start, tiles="CartoDB positron")
 
     STATUS_COLOR = {
-        "available": "#2E9C96",
+        "available": "#2FAE7A",
         "closing_soon": "#E8A93D",
         "unavailable": "#E4572E",
     }
 
     for _, row in rows_df.iterrows():
-        lat, lng = jitter_coords(row["region"], row["shelter_id"])
+        lat, lng = row["lat"], row["lng"]
         color = STATUS_COLOR.get(row["availability"], "#9CA3AF")
 
         marker_html = f"""
@@ -294,12 +349,7 @@ def build_shelter_map(rows_df, center_lat, center_lng, zoom_start=13, map_height
     folium_static(m, width=700, height=map_height)
 
 
-@st.cache_data
-def load_shelters():
-    return pd.read_csv("shelters.csv", encoding="utf-8-sig")
-
-
-df = load_shelters()
+df, using_real_api = load_shelters_api("shelters.csv", region_keyword="대구")
 
 # ---------- 세션 상태 초기화 ----------
 if "results" not in st.session_state:
@@ -311,33 +361,42 @@ if "view" not in st.session_state:
 if "menu_open" not in st.session_state:
     st.session_state.menu_open = False
 
-# ---------- 상단 바: 햄버거 토글 + 브랜드 (왼쪽 정렬, 클로드 메뉴바 스타일) ----------
-top_hamburger, top_brand, top_spacer = st.columns([0.8, 3, 4])
-with top_hamburger:
-    hamburger_clicked = st.button("☰", key="hamburger_btn")
-with top_brand:
+# ---------- 상단 바: 브랜드 (클릭하면 홈으로) ----------
+# st.container(key=...)는 최신 Streamlit(1.32+)에서만 지원됨.
+# 구버전 호환을 위해 지원 안 되면 일반 컨테이너로 조용히 폴백 (로고 클릭 기능만 비활성화됨)
+try:
+    _brand_container = st.container(key="brand_home_area")
+except TypeError:
+    _brand_container = st.container()
+
+with _brand_container:
     st.markdown(
         f'<div class="heatway-topbar"><span class="brand">'
         f'<img src="data:image/png;base64,{LOGO_B64}" alt="더위쉼표 로고"/>더위쉼표</span></div>',
         unsafe_allow_html=True,
     )
+    brand_clicked = st.button("더위쉼표 홈으로", key="brand_home_btn")
+
+# ---------- 햄버거 토글: 화면 진짜 왼쪽 상단 모서리에 고정 ----------
+hamburger_clicked = st.button("☰", key="hamburger_btn")
 
 if hamburger_clicked:
     st.session_state.menu_open = not st.session_state.menu_open
 
 home_clicked = info_clicked = all_clicked = False
 
+if brand_clicked:
+    home_clicked = True
+
 # ---------- 토글로 열고 닫히는 메뉴 패널 ----------
 if st.session_state.menu_open:
-    st.markdown('<div class="heatway-menu-panel">', unsafe_allow_html=True)
     m1, m2, m3 = st.columns(3)
     with m1:
-        home_clicked = st.button("🏠 홈", type="secondary", key="home_btn", use_container_width=True)
+        home_clicked = st.button("🏠 홈", type="secondary", key="home_btn", use_container_width=True) or home_clicked
     with m2:
         info_clicked = st.button("ℹ️ 소개·이용방법", type="secondary", key="info_btn", use_container_width=True)
     with m3:
         all_clicked = st.button("🗺️ 전체 쉼터", type="secondary", key="all_btn", use_container_width=True)
-    st.markdown("</div>", unsafe_allow_html=True)
 
 if home_clicked:
     st.session_state.view = "search"
@@ -362,16 +421,17 @@ if st.session_state.view == "info":
         <div class="heatway-panel">
             <h3>🌤️ 더위쉼표는요</h3>
             <p style="color:#374151; line-height:1.7;">
-                더위쉼표는 위치·시간·활동유형을 입력하면, 그 조건에서 <b>지금 실제로 이용 가능한</b>
+                더위쉼표는 위치·시간을 입력하면, 그 조건에서 <b>지금 실제로 이용 가능한</b>
                 무더위쉼터를 추천해주는 서비스예요.<br>
                 복잡한 판단은 서비스가 대신하고, 사용자는 잠깐이라도 더위로부터 멀어질 곳을 바로 찾을 수 있도록 만들었어요.
             </p>
         </div>
         <div class="heatway-panel">
             <h3>📋 이용 방법</h3>
-            <div class="heatway-step"><div class="num">1</div><div class="txt">지역, 방문 예정 시간, 활동유형을 선택하세요.</div></div>
+            <div class="heatway-step"><div class="num">1</div><div class="txt">지역과 방문 예정 시간을 선택하세요.</div></div>
             <div class="heatway-step"><div class="num">2</div><div class="txt">'쉼터 찾기'를 누르면 지금 이용 가능한 쉼터부터 정렬해서 보여드려요.</div></div>
             <div class="heatway-step"><div class="num">3</div><div class="txt">지도에서 색깔로 상태를 확인하고, 카드에서 상세 정보와 안내 문구를 읽어보세요.</div></div>
+            <div class="heatway-step"><div class="num">4</div><div class="txt">언제든 화면 위쪽의 '더위쉼표' 로고를 누르면 바로 홈 화면으로 돌아올 수 있어요.</div></div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -394,7 +454,14 @@ elif st.session_state.view == "all_shelters":
         unsafe_allow_html=True,
     )
     build_shelter_map(annotated, 35.8714, 128.6014, zoom_start=11, map_height=460)
-    st.caption("⚠️ 지도상 위치는 실제 주소가 아닌 지역 내 임의 배치입니다 (샘플 데이터 특성상 좌표 미포함).")
+    n_synthetic = int(annotated["_coords_synthetic"].sum()) if "_coords_synthetic" in annotated.columns else 0
+    if n_synthetic > 0:
+        st.caption(
+            f"⚠️ {n_synthetic}곳은 실좌표가 없어 지역 내 임의 위치로 표시됩니다. "
+            f"나머지는 행정안전부 API 실좌표입니다."
+        )
+    else:
+        st.caption("📍 지도상 위치는 행정안전부 무더위쉼터 API의 실제 좌표입니다.")
     if st.button("← 검색으로 돌아가기"):
         st.session_state.view = "search"
         st.rerun()
@@ -461,14 +528,33 @@ else:
     # ---------- 결과 ----------
     if search_clicked:
         time_str = input_time.strftime("%H:%M")
-        st.session_state.results = recommend_shelters(df, region, time_str, activity_type, top_n=10)
+        backend_result = call_backend_recommend(region, time_str, activity_type, top_n=10)
+
+        if backend_result is not None:
+            # SIR-002: FastAPI 백엔드 경유 (요청/결과/AI안내문 SQLite 저장까지 완료된 상태)
+            results, expanded, base_radius, using_real_api = backend_result
+            st.session_state.backend_used = True
+        else:
+            # 백엔드 미기동/응답없음 → 로컬 직접호출로 자동 폴백
+            results = recommend_shelters(df, region, time_str, activity_type, top_n=10)
+            expanded = bool(results["_expanded"].iloc[0]) if not results.empty else False
+            base_radius = results["_base_radius_km"].iloc[0] if not results.empty else 0
+            using_real_api = using_real_api  # 전역 로컬 df 로드시 판단된 값 그대로 사용
+            st.session_state.backend_used = False
+
+        st.session_state.results = results
         st.session_state.search_region = region
         st.session_state.search_time_str = time_str
+        st.session_state.search_expanded = expanded
+        st.session_state.search_base_radius = base_radius
 
     if st.session_state.results is not None:
         results = st.session_state.results
         region = st.session_state.search_region
         time_str = st.session_state.search_time_str
+
+        backend_note = "⚙️ FastAPI 백엔드 경유" if st.session_state.get("backend_used") else "⚙️ 로컬 직접호출 (백엔드 미기동)"
+        st.caption(backend_note)
 
         # 엣지케이스 1: 지역 내 쉼터 자체가 없는 경우
         if results.empty:
@@ -492,23 +578,34 @@ else:
                     unsafe_allow_html=True,
                 )
 
+            # ALR-007: 기본 반경 내 결과가 없어 검색 반경을 확장한 경우 안내
+            if st.session_state.get("search_expanded"):
+                base_r = st.session_state.get("search_base_radius")
+                st.caption(f"📡 기본 반경({base_r}km) 내 쉼터가 부족해 검색 범위를 넓혀 안내해드려요.")
+
             # ---------- 지도 ----------
             center_lat, center_lng = REGION_CENTER.get(region, (35.8714, 128.6014))
             build_shelter_map(results, center_lat, center_lng, zoom_start=13, map_height=420)
+            n_synthetic = int(results["_coords_synthetic"].sum()) if "_coords_synthetic" in results.columns else 0
+            coord_note = (
+                f"{n_synthetic}곳은 실좌표가 없어 지역 내 임의 위치로 표시됩니다."
+                if n_synthetic > 0 else "모든 위치는 행정안전부 API 실좌표입니다."
+            )
             st.caption(
-                "⚠️ 지도상 위치는 실제 주소가 아닌 지역 내 임의 배치입니다 (샘플 데이터 특성상 좌표 미포함). "
-                "핀 색상 · 팝업 테두리는 이용 가능 여부를 나타냅니다 (틸=가능 / 주황=곧마감 / 빨강=불가)."
+                f"📍 {coord_note} "
+                "핀 색상 · 팝업 테두리는 이용 가능 여부를 나타냅니다 (초록=가능 / 주황=곧마감 / 빨강=불가)."
             )
 
             # ---------- 카드 리스트 ----------
             for _, row in results.iterrows():
                 night_badge = " · 🌙 야간개방" if row["is_night_open"] == "Y" else ""
-                guide_text = generate_ai_guide_text(row)
+                # 백엔드 경유 시 이미 생성된 안내문구 재사용 (AI 중복호출/비용 방지)
+                guide_text = row["guide_text"] if "guide_text" in row and pd.notna(row["guide_text"]) else generate_ai_guide_text(row)
                 st.markdown(
                     f"""
                     <div class="heatway-card status-{row['availability']}">
                         <div class="card-title">{row['status_label']} · {row['name']}</div>
-                        <div class="card-meta">📮 {row['address']}</div>
+                        <div class="card-meta">📏 {row['distance_label']} · 📮 {row['address']}</div>
                         <div class="card-meta">🕐 운영시간 {row['open_time']}~{row['close_time']}{night_badge}</div>
                         <div class="card-meta">❄️ 에어컨 {row['ac_count']}대 · 선풍기 {row['fan_count']}대 · 수용 {row['capacity']}명</div>
                         <div class="card-guide">{guide_text}</div>
@@ -522,7 +619,7 @@ else:
             """
             <div class="heatway-empty">
                 <div class="icon">🌿</div>
-                지역, 시간, 활동유형을 선택하고<br>'쉼터 찾기'를 눌러주세요.
+                지역, 시간을 선택하고<br>'쉼터 찾기'를 눌러주세요.
             </div>
             """,
             unsafe_allow_html=True,
@@ -531,11 +628,15 @@ else:
     # ---------- 하단 안내 ----------
     st.divider()
     ai_status = "Claude API 연동됨" if _ANTHROPIC_AVAILABLE else "템플릿 문구 사용 중 (ANTHROPIC_API_KEY 미설정)"
+    data_status = (
+        "행정안전부 무더위쉼터 표준데이터 API 실연동 중"
+        if using_real_api
+        else "샘플 데이터 사용 중 (SHELTER_API_KEY 미설정 또는 API 응답 없음)"
+    )
     st.markdown(
         f"""
         <div class="heatway-footer">
-            ℹ️ 데모 버전 안내: 쉼터 데이터는 실제 서비스 스키마를 기반으로 한 샘플입니다.
-            실제 서비스에서는 행정안전부 무더위쉼터 표준데이터(data.go.kr)와 연동됩니다.<br>
+            ℹ️ 데이터: {data_status}<br>
             안내문구 생성: {ai_status}
         </div>
         """,
