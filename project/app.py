@@ -97,29 +97,19 @@ st.markdown(
         object-fit: contain;
     }
 
-    /* 브랜드(로고+텍스트) 클릭 시 홈으로: 보이는 HTML 위에 투명 버튼을 겹쳐서 클릭을 받는다 */
-    .st-key-brand_home_area {
-        position: relative;
-        cursor: pointer;
-        width: fit-content;
+    /* 브랜드(로고+텍스트) 옆에 눈에 보이는 작은 "처음으로" 버튼을 둔다.
+       (투명 오버레이 방식은 Streamlit 버전에 따라 안 먹는 경우가 있어 제거) */
+    .st-key-brand_home_btn button {
+        background: white !important;
+        color: #2E6BB0 !important;
+        border: 1.5px solid #D6E9FC !important;
+        border-radius: 999px !important;
+        font-weight: 600 !important;
+        font-size: 0.85rem !important;
+        padding: 0.3rem 0.9rem !important;
     }
-    .st-key-brand_home_area .heatway-topbar {
-        pointer-events: none; /* 시각 요소는 클릭을 통과시키고 아래 버튼이 받도록 */
-    }
-    .st-key-brand_home_area .st-key-brand_home_btn {
-        position: absolute;
-        inset: 0;
-        z-index: 10;
-    }
-    .st-key-brand_home_area .st-key-brand_home_btn button {
-        width: 100%;
-        height: 100%;
-        opacity: 0;
-        border: none !important;
-        background: transparent !important;
-        box-shadow: none !important;
-        padding: 0 !important;
-        cursor: pointer;
+    .st-key-brand_home_btn button:hover {
+        background: #EAF2FE !important;
     }
 
     /* 햄버거 버튼 - 화면 흐름 안에서 왼쪽 위에 배치 (position:fixed는 Streamlit 자체
@@ -358,8 +348,8 @@ if "view" not in st.session_state:
 if "menu_open" not in st.session_state:
     st.session_state.menu_open = False
 
-# ---------- 상단 바: 햄버거 토글 + 브랜드 (클릭하면 홈으로) ----------
-top_ham_col, top_brand_col = st.columns([0.8, 5])
+# ---------- 상단 바: 햄버거 토글 + 브랜드 + 처음으로 버튼 ----------
+top_ham_col, top_brand_col, top_home_col = st.columns([0.8, 3.5, 1.5])
 
 with top_ham_col:
     hamburger_clicked = st.button("☰", key="hamburger_btn")
@@ -367,31 +357,27 @@ with top_ham_col:
 if hamburger_clicked:
     st.session_state.menu_open = not st.session_state.menu_open
 
-# st.container(key=...)는 최신 Streamlit(1.32+)에서만 지원됨.
-# 구버전 호환을 위해 지원 안 되면 일반 컨테이너로 조용히 폴백 (로고 클릭 기능만 비활성화됨)
-try:
-    _brand_container = top_brand_col.container(key="brand_home_area")
-except TypeError:
-    _brand_container = top_brand_col.container()
-
-with _brand_container:
+with top_brand_col:
     st.markdown(
         f'<div class="heatway-topbar"><span class="brand">'
         f'<img src="data:image/png;base64,{LOGO_B64}" alt="더위쉼표 로고"/>더위쉼표</span></div>',
         unsafe_allow_html=True,
     )
-    brand_clicked = st.button("더위쉼표 홈으로", key="brand_home_btn")
+
+with top_home_col:
+    brand_clicked = st.button("🔄 처음으로", key="brand_home_btn", use_container_width=True)
 
 home_clicked = info_clicked = all_clicked = guardian_clicked = False
+mode_select_clicked = False
 
 if brand_clicked:
-    home_clicked = True
+    mode_select_clicked = True
 
 # ---------- 토글로 열고 닫히는 메뉴 패널 ----------
 if st.session_state.menu_open:
     m1, m2, m3, m4 = st.columns(4)
     with m1:
-        home_clicked = st.button("🏠 홈", type="secondary", key="home_btn", use_container_width=True) or home_clicked
+        home_clicked = st.button("🏠 홈", type="secondary", key="home_btn", use_container_width=True)
     with m2:
         info_clicked = st.button("ℹ️ 소개·이용방법", type="secondary", key="info_btn", use_container_width=True)
     with m3:
@@ -399,6 +385,13 @@ if st.session_state.menu_open:
     with m4:
         guardian_clicked = st.button("👪 보호자 모드", type="secondary", key="guardian_btn", use_container_width=True)
 
+if mode_select_clicked:
+    st.session_state.view = "mode_select"
+    st.session_state.results = None
+    st.session_state.search_region = None
+    st.session_state.search_time_str = None
+    st.session_state.menu_open = False
+    st.rerun()
 if home_clicked:
     st.session_state.view = "search"
     st.session_state.results = None
@@ -605,6 +598,8 @@ elif st.session_state.view == "guardian":
                     st.rerun()
 
             st.divider()
+            if active.get("checkin_requested_at"):
+                st.warning("📞 보호자가 안부 확인을 요청했어요! 아래 버튼으로 응답해주세요.")
             st.markdown("**보호자에게 지금 상태를 알려주세요**")
             c1, c2 = st.columns(2)
             with c1:
@@ -625,13 +620,30 @@ elif st.session_state.view == "guardian":
             st.info("현재 진행 중인 외출이 없어요.")
         else:
             now = datetime.now()
+
+            # 각 외출별 초과여부 미리 계산 (요약카드 + 카드 렌더링 둘 다 사용)
+            enriched = []
             for o in outings:
                 try:
                     expected = datetime.fromisoformat(o["expected_return_time"])
                     overdue = now > expected and o["status"] != "returned"
                 except ValueError:
                     overdue = False
+                enriched.append((o, overdue))
 
+            # ---------- 상단 요약카드 ----------
+            n_total = len(enriched)
+            n_overdue = sum(1 for _, overdue in enriched if overdue)
+            n_help = sum(1 for o, _ in enriched if o["status"] == "need_help")
+
+            m1, m2, m3 = st.columns(3)
+            m1.metric("진행 중인 외출", f"{n_total}건")
+            m2.metric("응답 확인 필요", f"{n_overdue}건", delta="주의" if n_overdue else None, delta_color="inverse")
+            m3.metric("도움 요청", f"{n_help}건", delta="긴급" if n_help else None, delta_color="inverse")
+            st.divider()
+
+            # ---------- 개별 외출 카드 ----------
+            for o, overdue in enriched:
                 if o["status"] == "need_help":
                     border_status = "unavailable"  # 빨강
                 elif overdue:
@@ -645,6 +657,12 @@ elif st.session_state.view == "guardian":
                     checkin_note = f"{label} ({o['last_checkin_at'][11:16]})"
 
                 overdue_badge = " · ⚠️ 귀가 예정 시간 초과, 응답 확인 필요" if overdue else ""
+                request_note = ""
+                if o.get("checkin_requested_at"):
+                    request_note = f" · 📞 안부 요청됨 ({o['checkin_requested_at'][11:16]})"
+                emergency_note = ""
+                if o.get("emergency_called_at"):
+                    emergency_note = f" · ⚠️ 긴급호출 ({o['emergency_called_at'][11:16]})"
 
                 st.markdown(
                     f"""
@@ -653,11 +671,32 @@ elif st.session_state.view == "guardian":
                         <div class="card-meta">🚶 외출 시작: {o['start_time'][11:16]}</div>
                         <div class="card-meta">🏠 목적지: {o['shelter_name'] or '미지정'} · 상태: {o['status']}</div>
                         <div class="card-meta">🕐 귀가 예정: {o['expected_return_time'][11:16] if len(o['expected_return_time'])>10 else o['expected_return_time']}</div>
-                        <div class="card-guide">최근 안부: {checkin_note}</div>
+                        <div class="card-guide">최근 안부: {checkin_note}{request_note}{emergency_note}</div>
                     </div>
                     """,
                     unsafe_allow_html=True,
                 )
+
+                bcol1, bcol2 = st.columns(2)
+                with bcol1:
+                    if st.button("📞 안부 확인 요청", key=f"req_checkin_{o['session_id']}", use_container_width=True):
+                        db.request_checkin(o["session_id"])
+                        st.rerun()
+                with bcol2:
+                    if st.button("⚠️ 긴급 연락망 호출 (데모)", key=f"emergency_{o['session_id']}", use_container_width=True):
+                        db.call_emergency(o["session_id"])
+                        st.warning(f"{o['dependent_name']}님 관련 긴급 연락망 호출을 시뮬레이션했습니다. (실제 발신·신고는 연동되지 않습니다)")
+                        st.rerun()
+
+                with st.expander("🕒 시간순 안부 타임라인 보기"):
+                    events = db.get_events(o["session_id"])
+                    if not events:
+                        st.caption("기록된 이벤트가 없어요.")
+                    else:
+                        for e in events:
+                            st.markdown(f"`{e['created_at'][11:16]}` {e['event_text']}")
+
+                st.write("")
 
     if st.button("← 검색으로 돌아가기"):
         st.session_state.view = "search"
@@ -692,6 +731,50 @@ else:
         "* 위 정보는 데모용 예시입니다. 실제 서비스에서는 기상청 영향예보 API와 연동되어 "
         "실시간 폭염 특보 단계가 표시됩니다."
     )
+
+    # ---------- 나의 안전 상태 (보호자 모드 메뉴 안 거치고 여기서 바로) ----------
+    with st.expander("🛟 나의 안전 상태 (보호자에게 바로 전달)", expanded=False):
+        my_name = st.text_input("이름", key="dep_name", placeholder="예: 김영자")
+        my_active = db.get_active_outing(my_name) if my_name else None
+
+        if my_active:
+            status_label = {
+                "in_progress": "🔵 외출 중", "checked_in": "🟢 쉼터 도착",
+                "need_help": "🆘 도움 요청됨",
+            }.get(my_active["status"], my_active["status"])
+            st.markdown(f"현재 상태: **{status_label}** · 목적지: {my_active['shelter_name'] or '미지정'}")
+
+            qc1, qc2, qc3 = st.columns(3)
+            with qc1:
+                if my_active["status"] == "in_progress" and st.button("🏠 쉼터 도착", key="quick_checkin", use_container_width=True):
+                    db.checkin_shelter(my_active["session_id"])
+                    st.rerun()
+            with qc2:
+                if st.button("✅ 무사히 귀가", key="quick_return", use_container_width=True):
+                    db.mark_returned(my_active["session_id"])
+                    st.rerun()
+            with qc3:
+                if st.button("😊 괜찮아요", key="quick_ok", use_container_width=True):
+                    db.send_checkin(my_active["session_id"], "ok")
+                    st.success("보호자에게 전달됐어요.")
+
+            st.write("")
+            if st.button("🆘 지금 위험해요", type="primary", key="quick_danger", use_container_width=True):
+                db.send_checkin(my_active["session_id"], "need_help")
+                st.error("🆘 보호자에게 긴급 상황이 즉시 전달됐어요.")
+
+        else:
+            st.caption(
+                "등록된 외출이 없어요. 이름을 입력하고 검색 결과 카드의 "
+                "'👪 이 쉼터로 외출 시작'을 누르면 보호자와 상태를 공유할 수 있어요."
+            )
+            st.write("")
+            if st.button("🆘 지금 위험해요 (자동 신고)", type="primary", key="quick_danger_noguardian", use_container_width=True):
+                db.create_emergency_report(my_name or "익명", "본인모드에서 위험 신고 (보호자 미연결)")
+                st.error(
+                    "🆘 연결된 보호자가 없어, 위치 기반 안전 신고 시스템에 자동으로 접수됐어요. "
+                    "(데모 시뮬레이션 — 실제 119/안전센터 연동은 되어있지 않습니다)"
+                )
 
     # ---------- 입력 ----------
     col1, col2 = st.columns(2)

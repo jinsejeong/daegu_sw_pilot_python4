@@ -63,7 +63,17 @@ CREATE TABLE IF NOT EXISTS outing_sessions (
     dependent_name TEXT NOT NULL, shelter_id TEXT, shelter_name TEXT,
     start_time TEXT NOT NULL, expected_return_time TEXT NOT NULL,
     actual_return_time TEXT, status TEXT NOT NULL DEFAULT 'in_progress',
-    last_checkin_at TEXT, last_checkin_status TEXT, created_at TEXT
+    last_checkin_at TEXT, last_checkin_status TEXT,
+    checkin_requested_at TEXT, emergency_called_at TEXT, created_at TEXT
+);
+CREATE TABLE IF NOT EXISTS outing_events (
+    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL, event_type TEXT NOT NULL,
+    event_text TEXT, created_at TEXT
+);
+CREATE TABLE IF NOT EXISTS emergency_reports (
+    report_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    reporter_name TEXT, message TEXT, created_at TEXT
 );
 """
 
@@ -96,7 +106,17 @@ CREATE TABLE IF NOT EXISTS outing_sessions (
     dependent_name TEXT NOT NULL, shelter_id TEXT, shelter_name TEXT,
     start_time TEXT NOT NULL, expected_return_time TEXT NOT NULL,
     actual_return_time TEXT, status TEXT NOT NULL DEFAULT 'in_progress',
-    last_checkin_at TEXT, last_checkin_status TEXT, created_at TEXT
+    last_checkin_at TEXT, last_checkin_status TEXT,
+    checkin_requested_at TEXT, emergency_called_at TEXT, created_at TEXT
+);
+CREATE TABLE IF NOT EXISTS outing_events (
+    event_id SERIAL PRIMARY KEY,
+    session_id INTEGER NOT NULL, event_type TEXT NOT NULL,
+    event_text TEXT, created_at TEXT
+);
+CREATE TABLE IF NOT EXISTS emergency_reports (
+    report_id SERIAL PRIMARY KEY,
+    reporter_name TEXT, message TEXT, created_at TEXT
 );
 """
 
@@ -141,6 +161,27 @@ def init_db():
                     cur.execute(stmt)
         else:
             conn.executescript(schema)
+    _migrate_outing_sessions_columns()
+
+
+def _migrate_outing_sessions_columns():
+    """
+    이미 만들어져 있던 outing_sessions 테이블(구버전 스키마)에
+    checkin_requested_at / emergency_called_at 컬럼이 없으면 추가한다.
+    CREATE TABLE IF NOT EXISTS는 기존 테이블 구조를 바꿔주지 않기 때문에 필요.
+    """
+    new_columns = ["checkin_requested_at", "emergency_called_at"]
+    with get_conn() as conn:
+        cur = conn.cursor()
+        if BACKEND == "postgres":
+            for col in new_columns:
+                cur.execute(f"ALTER TABLE outing_sessions ADD COLUMN IF NOT EXISTS {col} TEXT")
+        else:
+            cur.execute("PRAGMA table_info(outing_sessions)")
+            existing = {row[1] for row in cur.fetchall()}
+            for col in new_columns:
+                if col not in existing:
+                    cur.execute(f"ALTER TABLE outing_sessions ADD COLUMN {col} TEXT")
 
 
 # ---------------------------------------------------------------------------
@@ -227,6 +268,24 @@ def get_recent_requests(limit: int = 20):
 # 보호자 모드 (PRD F5) — RFP 구현제외 항목이나 팀 결정으로 풀버전 구현
 # ---------------------------------------------------------------------------
 
+def log_event(session_id: int, event_type: str, event_text: str):
+    """시간순 안부 타임라인용 이벤트 기록"""
+    with get_conn() as conn:
+        cur = _cursor(conn)
+        cur.execute(
+            Q("INSERT INTO outing_events (session_id, event_type, event_text, created_at) VALUES (?,?,?,?)"),
+            (session_id, event_type, event_text, datetime.now().isoformat()),
+        )
+
+
+def get_events(session_id: int):
+    """특정 외출 세션의 타임라인 이벤트를 시간순으로 조회"""
+    with get_conn() as conn:
+        cur = _cursor(conn)
+        cur.execute(Q("SELECT * FROM outing_events WHERE session_id=? ORDER BY created_at ASC"), (session_id,))
+        return [dict(r) for r in cur.fetchall()]
+
+
 def start_outing(dependent_name: str, expected_return_time: str,
                   shelter_id: str = None, shelter_name: str = None) -> int:
     now = datetime.now().isoformat()
@@ -242,13 +301,18 @@ def start_outing(dependent_name: str, expected_return_time: str,
     with get_conn() as conn:
         cur = _cursor(conn)
         cur.execute(Q(sql), (dependent_name, shelter_id, shelter_name, now, expected_return_time, now))
-        return cur.fetchone()["session_id"] if BACKEND == "postgres" else cur.lastrowid
+        session_id = cur.fetchone()["session_id"] if BACKEND == "postgres" else cur.lastrowid
+
+    log_event(session_id, "start", f"{dependent_name}님 외출 시작"
+              + (f" (목적지: {shelter_name})" if shelter_name else ""))
+    return session_id
 
 
 def checkin_shelter(session_id: int):
     with get_conn() as conn:
         cur = _cursor(conn)
         cur.execute(Q("UPDATE outing_sessions SET status='checked_in' WHERE session_id=?"), (session_id,))
+    log_event(session_id, "checkin_shelter", "🏠 쉼터 도착")
 
 
 def mark_returned(session_id: int):
@@ -258,18 +322,47 @@ def mark_returned(session_id: int):
             Q("UPDATE outing_sessions SET status='returned', actual_return_time=? WHERE session_id=?"),
             (datetime.now().isoformat(), session_id),
         )
+    log_event(session_id, "return", "✅ 무사히 귀가 완료")
 
 
 def send_checkin(session_id: int, status: str):
+    """
+    안부 확인 응답 (외출자가 누름): status는 'ok' 또는 'need_help'.
+    응답하면 보호자의 안부 요청 상태(checkin_requested_at)도 함께 해제한다.
+    """
     now = datetime.now().isoformat()
     with get_conn() as conn:
         cur = _cursor(conn)
         cur.execute(
-            Q("UPDATE outing_sessions SET last_checkin_at=?, last_checkin_status=? WHERE session_id=?"),
+            Q("UPDATE outing_sessions SET last_checkin_at=?, last_checkin_status=?, checkin_requested_at=NULL "
+              "WHERE session_id=?"),
             (now, status, session_id),
         )
         if status == "need_help":
             cur.execute(Q("UPDATE outing_sessions SET status='need_help' WHERE session_id=?"), (session_id,))
+    log_event(
+        session_id,
+        "checkin_ok" if status == "ok" else "checkin_help",
+        "😊 괜찮아요 응답" if status == "ok" else "🆘 도움이 필요해요 응답",
+    )
+
+
+def request_checkin(session_id: int):
+    """보호자가 먼저 안부 확인을 요청 (📞 버튼)"""
+    now = datetime.now().isoformat()
+    with get_conn() as conn:
+        cur = _cursor(conn)
+        cur.execute(Q("UPDATE outing_sessions SET checkin_requested_at=? WHERE session_id=?"), (now, session_id))
+    log_event(session_id, "checkin_request", "📞 보호자가 안부 확인을 요청했어요")
+
+
+def call_emergency(session_id: int):
+    """긴급 연락망 호출 (⚠️ 데모용 시뮬레이션 — 실제 발신/신고 연동 없음)"""
+    now = datetime.now().isoformat()
+    with get_conn() as conn:
+        cur = _cursor(conn)
+        cur.execute(Q("UPDATE outing_sessions SET emergency_called_at=? WHERE session_id=?"), (now, session_id))
+    log_event(session_id, "emergency_call", "⚠️ 긴급 연락망 호출 (데모 시뮬레이션)")
 
 
 def get_active_outing(dependent_name: str):
@@ -304,3 +397,30 @@ def get_outing_by_id(session_id: int):
         cur.execute(Q("SELECT * FROM outing_sessions WHERE session_id=?"), (session_id,))
         row = cur.fetchone()
         return dict(row) if row else None
+
+
+# ---------------------------------------------------------------------------
+# 보호자 연결이 없을 때의 독립 신고 (본인모드에서 바로 위험 신고)
+# ---------------------------------------------------------------------------
+
+def create_emergency_report(reporter_name: str, message: str = "위험 상황 자동 신고") -> int:
+    """
+    보호자와 연결된 외출 세션이 없는 상태에서 '위험해요' 버튼을 눌렀을 때 기록.
+    실제 119/지역 안전센터 연동은 없는 데모용 시뮬레이션이다.
+    """
+    now = datetime.now().isoformat()
+    sql = "INSERT INTO emergency_reports (reporter_name, message, created_at) VALUES (?,?,?)"
+    if BACKEND == "postgres":
+        sql += " RETURNING report_id"
+    with get_conn() as conn:
+        cur = _cursor(conn)
+        cur.execute(Q(sql), (reporter_name or "익명", message, now))
+        return cur.fetchone()["report_id"] if BACKEND == "postgres" else cur.lastrowid
+
+
+def get_recent_emergency_reports(limit: int = 20):
+    with get_conn() as conn:
+        cur = _cursor(conn)
+        cur.execute(Q("SELECT * FROM emergency_reports ORDER BY created_at DESC LIMIT ?"), (limit,))
+        return [dict(r) for r in cur.fetchall()]
+

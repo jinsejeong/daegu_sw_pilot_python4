@@ -1,0 +1,8 @@
+streamlit
+pandas
+folium
+streamlit-folium
+anthropic
+requests
+python-dotenv
+psycopg2-binary
