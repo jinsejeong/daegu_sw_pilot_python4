@@ -354,7 +354,7 @@ if "results" not in st.session_state:
     st.session_state.search_region = None
     st.session_state.search_time_str = None
 if "view" not in st.session_state:
-    st.session_state.view = "search"  # search | info | all_shelters
+    st.session_state.view = "mode_select"  # mode_select | search | info | all_shelters | guardian
 if "menu_open" not in st.session_state:
     st.session_state.menu_open = False
 
@@ -417,9 +417,58 @@ if guardian_clicked:
     st.session_state.menu_open = False
 
 # =========================================================
+# 뷰: 시작 화면 — 본인모드 / 보호자모드 선택
+# =========================================================
+if st.session_state.view == "mode_select":
+    st.markdown(
+        f"""
+        <div class="heatway-hero" style="text-align:center;">
+            <h1 style="justify-content:center;"><img src="data:image/png;base64,{LOGO_WHITE_B64}" alt="더위쉼표 로고"/>더위쉼표</h1>
+            <p>더위로부터, 잠시 멀어지세요</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown("<h4 style='text-align:center;'>어떤 모드로 시작할까요?</h4>", unsafe_allow_html=True)
+    st.write("")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown(
+            """
+            <div class="heatway-panel" style="text-align:center;">
+                <div style="font-size:2.4rem;">🚶</div>
+                <h3>본인 모드</h3>
+                <p style="color:#6B7280;">내가 직접 쉼터를 찾고<br>외출을 기록해요</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if st.button("본인 모드로 시작", type="primary", use_container_width=True, key="mode_self_btn"):
+            st.session_state.view = "search"
+            st.rerun()
+    with c2:
+        st.markdown(
+            """
+            <div class="heatway-panel" style="text-align:center;">
+                <div style="font-size:2.4rem;">👪</div>
+                <h3>보호자 모드</h3>
+                <p style="color:#6B7280;">가족의 외출 상태를<br>확인해요</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if st.button("보호자 모드로 시작", type="primary", use_container_width=True, key="mode_guardian_btn"):
+            st.session_state.view = "guardian"
+            st.session_state.guardian_subtab = "👨‍👩‍👧 보호자로 보기"
+            st.rerun()
+
+    st.caption("나중에 언제든 왼쪽 위 ☰ 메뉴에서 모드를 바꿀 수 있어요.")
+
+# =========================================================
 # 뷰: 서비스 소개 + 이용방법
 # =========================================================
-if st.session_state.view == "info":
+elif st.session_state.view == "info":
     st.markdown(
         """
         <div class="heatway-panel">
