@@ -16,6 +16,9 @@ import pandas as pd
 from pathlib import Path
 from datetime import datetime
 from contextlib import contextmanager
+from dotenv import load_dotenv
+
+load_dotenv()  # db.py가 어떤 경로로 import되든(app.py 경유든, 단독 테스트든) 항상 .env를 읽도록 자체 보장
 
 DB_PATH = Path(__file__).parent / "heatway.db"
 DATABASE_URL = os.environ.get("DATABASE_URL")  # Supabase 등에서 발급받은 Postgres 연결문자열
