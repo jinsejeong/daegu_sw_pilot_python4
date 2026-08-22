@@ -16,6 +16,9 @@ from matching import recommend_shelters, annotate_availability
 from geo import jitter_coords, REGION_CENTER
 from ai_guide import generate_ai_guide_text, _ANTHROPIC_AVAILABLE
 from shelter_api import load_shelters as load_shelters_api
+import db
+
+db.init_db()
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8000")
 
@@ -379,20 +382,22 @@ with _brand_container:
     )
     brand_clicked = st.button("더위쉼표 홈으로", key="brand_home_btn")
 
-home_clicked = info_clicked = all_clicked = False
+home_clicked = info_clicked = all_clicked = guardian_clicked = False
 
 if brand_clicked:
     home_clicked = True
 
 # ---------- 토글로 열고 닫히는 메뉴 패널 ----------
 if st.session_state.menu_open:
-    m1, m2, m3 = st.columns(3)
+    m1, m2, m3, m4 = st.columns(4)
     with m1:
         home_clicked = st.button("🏠 홈", type="secondary", key="home_btn", use_container_width=True) or home_clicked
     with m2:
         info_clicked = st.button("ℹ️ 소개·이용방법", type="secondary", key="info_btn", use_container_width=True)
     with m3:
         all_clicked = st.button("🗺️ 전체 쉼터", type="secondary", key="all_btn", use_container_width=True)
+    with m4:
+        guardian_clicked = st.button("👪 보호자 모드", type="secondary", key="guardian_btn", use_container_width=True)
 
 if home_clicked:
     st.session_state.view = "search"
@@ -406,6 +411,9 @@ if info_clicked:
     st.session_state.menu_open = False
 if all_clicked:
     st.session_state.view = "all_shelters"
+    st.session_state.menu_open = False
+if guardian_clicked:
+    st.session_state.view = "guardian"
     st.session_state.menu_open = False
 
 # =========================================================
@@ -463,10 +471,149 @@ elif st.session_state.view == "all_shelters":
         st.rerun()
 
 # =========================================================
-# 뷰: 오늘의 폭염 정보 (예시 — 실 API 미연동)
+# 뷰: 보호자 모드 (PRD F5 — RFP 구현제외 항목, 팀 결정으로 보너스 구현)
 # =========================================================
-# 뷰: 검색 (기본) — 폭염정보 배너를 여기에 통합
-# =========================================================
+elif st.session_state.view == "guardian":
+    st.subheader("👪 보호자 모드")
+    st.caption(
+        "고령자·어린이 등 취약계층의 외출 여정을 보호자가 확인할 수 있는 기능입니다. "
+        "실제 로그인 계정 없이, 이름으로 외출 세션을 구분합니다."
+    )
+
+    sub_tab = st.radio(
+        "화면 선택", ["🚶 나가는 사람", "👨‍👩‍👧 보호자로 보기"],
+        horizontal=True, label_visibility="collapsed", key="guardian_subtab",
+    )
+    st.divider()
+
+    # ---------------------------------------------------
+    # 서브뷰 A: 나가는 사람 화면
+    # ---------------------------------------------------
+    if sub_tab == "🚶 나가는 사람":
+        name = st.text_input("이름", key="dep_name", placeholder="예: 김영자")
+
+        active = db.get_active_outing(name) if name else None
+
+        if active is None:
+            st.markdown("아직 진행 중인 외출이 없어요. 외출을 시작해보세요.")
+
+            # 직전 검색 결과가 있으면 목적지 쉼터로 바로 선택 가능하게
+            shelter_options = ["(직접 입력)"]
+            if st.session_state.get("results") is not None and not st.session_state.results.empty:
+                shelter_options += st.session_state.results["name"].tolist()
+
+            picked = st.selectbox("목적지 쉼터", shelter_options, key="dep_shelter_pick")
+            manual_shelter = ""
+            if picked == "(직접 입력)":
+                manual_shelter = st.text_input("쉼터명 직접 입력 (선택)", key="dep_shelter_manual")
+
+            return_time = st.time_input("귀가 예정 시간", key="dep_return_time")
+
+            if st.button("🚶 외출 시작", type="primary", use_container_width=True):
+                if not name:
+                    st.warning("이름을 입력해주세요.")
+                else:
+                    shelter_name = manual_shelter if picked == "(직접 입력)" else picked
+                    shelter_id = None
+                    if picked != "(직접 입력)" and st.session_state.get("results") is not None:
+                        match = st.session_state.results[st.session_state.results["name"] == picked]
+                        if not match.empty:
+                            shelter_id = str(match.iloc[0]["shelter_id"])
+                    return_dt = datetime.now().replace(
+                        hour=return_time.hour, minute=return_time.minute, second=0
+                    ).isoformat()
+                    db.start_outing(name, return_dt, shelter_id, shelter_name or None)
+                    st.rerun()
+
+        else:
+            status_label = {
+                "in_progress": "🔵 외출 중", "checked_in": "🟢 쉼터 도착",
+                "need_help": "🆘 도움 요청됨",
+            }.get(active["status"], active["status"])
+            st.markdown(f"### {status_label}")
+
+            st.markdown(
+                f"""
+                <div class="heatway-card status-available">
+                    <div class="card-title">{active['dependent_name']}님의 외출</div>
+                    <div class="card-meta">🚶 출발: {active['start_time'][11:16]}</div>
+                    <div class="card-meta">🏠 목적지: {active['shelter_name'] or '미지정'}</div>
+                    <div class="card-meta">🕐 귀가 예정: {active['expected_return_time'][11:16] if len(active['expected_return_time'])>10 else active['expected_return_time']}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            col_a, col_b = st.columns(2)
+            with col_a:
+                if active["status"] == "in_progress":
+                    if st.button("🏠 쉼터 도착 체크인", use_container_width=True):
+                        db.checkin_shelter(active["session_id"])
+                        st.rerun()
+            with col_b:
+                if st.button("✅ 무사히 귀가", use_container_width=True):
+                    db.mark_returned(active["session_id"])
+                    st.rerun()
+
+            st.divider()
+            st.markdown("**보호자에게 지금 상태를 알려주세요**")
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("😊 괜찮아요", use_container_width=True):
+                    db.send_checkin(active["session_id"], "ok")
+                    st.success("안부가 전달됐어요.")
+            with c2:
+                if st.button("🆘 도움이 필요해요", use_container_width=True):
+                    db.send_checkin(active["session_id"], "need_help")
+                    st.error("도움 요청이 보호자에게 전달됐어요.")
+
+    # ---------------------------------------------------
+    # 서브뷰 B: 보호자로 보기
+    # ---------------------------------------------------
+    else:
+        outings = db.get_all_active_outings()
+        if not outings:
+            st.info("현재 진행 중인 외출이 없어요.")
+        else:
+            now = datetime.now()
+            for o in outings:
+                try:
+                    expected = datetime.fromisoformat(o["expected_return_time"])
+                    overdue = now > expected and o["status"] != "returned"
+                except ValueError:
+                    overdue = False
+
+                if o["status"] == "need_help":
+                    border_status = "unavailable"  # 빨강
+                elif overdue:
+                    border_status = "closing_soon"  # 주황
+                else:
+                    border_status = "available"  # 초록
+
+                checkin_note = "아직 응답 없음"
+                if o["last_checkin_at"]:
+                    label = "😊 괜찮아요" if o["last_checkin_status"] == "ok" else "🆘 도움 필요"
+                    checkin_note = f"{label} ({o['last_checkin_at'][11:16]})"
+
+                overdue_badge = " · ⚠️ 귀가 예정 시간 초과, 응답 확인 필요" if overdue else ""
+
+                st.markdown(
+                    f"""
+                    <div class="heatway-card status-{border_status}">
+                        <div class="card-title">{o['dependent_name']}님{overdue_badge}</div>
+                        <div class="card-meta">🚶 외출 시작: {o['start_time'][11:16]}</div>
+                        <div class="card-meta">🏠 목적지: {o['shelter_name'] or '미지정'} · 상태: {o['status']}</div>
+                        <div class="card-meta">🕐 귀가 예정: {o['expected_return_time'][11:16] if len(o['expected_return_time'])>10 else o['expected_return_time']}</div>
+                        <div class="card-guide">최근 안부: {checkin_note}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+    if st.button("← 검색으로 돌아가기"):
+        st.session_state.view = "search"
+        st.rerun()
+
 else:
     # ---------- 헤더 ----------
     st.markdown(
@@ -593,7 +740,7 @@ else:
             )
 
             # ---------- 카드 리스트 ----------
-            for _, row in results.iterrows():
+            for idx, row in results.iterrows():
                 night_badge = " · 🌙 야간개방" if row["is_night_open"] == "Y" else ""
                 # 백엔드 경유 시 이미 생성된 안내문구 재사용 (AI 중복호출/비용 방지)
                 guide_text = row["guide_text"] if "guide_text" in row and pd.notna(row["guide_text"]) else generate_ai_guide_text(row)
@@ -609,6 +756,11 @@ else:
                     """,
                     unsafe_allow_html=True,
                 )
+                if st.button(f"👪 이 쉼터로 외출 시작", key=f"outing_start_{idx}"):
+                    st.session_state.view = "guardian"
+                    st.session_state.guardian_subtab = "🚶 나가는 사람"
+                    st.session_state.dep_shelter_pick = row["name"]
+                    st.rerun()
 
     else:
         st.markdown(

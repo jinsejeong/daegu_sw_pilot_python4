@@ -60,6 +60,22 @@ CREATE TABLE IF NOT EXISTS guide_texts (
     created_at TEXT,
     FOREIGN KEY (request_id) REFERENCES recommendation_requests(request_id)
 );
+
+-- 보호자 모드 (PRD F5, RFP 명시적 구현제외 항목이나 팀 결정으로 보너스 구현)
+CREATE TABLE IF NOT EXISTS outing_sessions (
+    session_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    dependent_name TEXT NOT NULL,
+    shelter_id TEXT,
+    shelter_name TEXT,
+    start_time TEXT NOT NULL,
+    expected_return_time TEXT NOT NULL,
+    actual_return_time TEXT,
+    status TEXT NOT NULL DEFAULT 'in_progress',
+        -- in_progress | checked_in | returned | need_help
+    last_checkin_at TEXT,
+    last_checkin_status TEXT,  -- ok | need_help
+    created_at TEXT
+);
 """
 
 
@@ -160,3 +176,95 @@ def get_recent_requests(limit: int = 20):
             (limit,),
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# 보호자 모드 (PRD F5) — RFP 구현제외 항목이나 팀 결정으로 풀버전 구현
+# ---------------------------------------------------------------------------
+
+def start_outing(dependent_name: str, expected_return_time: str,
+                  shelter_id: str = None, shelter_name: str = None) -> int:
+    """외출 시작 기록. session_id 반환"""
+    now = datetime.now().isoformat()
+    with get_conn() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO outing_sessions
+                (dependent_name, shelter_id, shelter_name, start_time,
+                 expected_return_time, status, created_at)
+            VALUES (?,?,?,?,?, 'in_progress', ?)
+            """,
+            (dependent_name, shelter_id, shelter_name, now, expected_return_time, now),
+        )
+        return cur.lastrowid
+
+
+def checkin_shelter(session_id: int):
+    """쉼터 도착 체크인"""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE outing_sessions SET status='checked_in' WHERE session_id=?",
+            (session_id,),
+        )
+
+
+def mark_returned(session_id: int):
+    """귀가 완료 처리"""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE outing_sessions SET status='returned', actual_return_time=? WHERE session_id=?",
+            (datetime.now().isoformat(), session_id),
+        )
+
+
+def send_checkin(session_id: int, status: str):
+    """
+    안부 확인 응답 (외출자가 누름): status는 'ok' 또는 'need_help'.
+    'need_help'면 세션 상태 자체도 need_help로 바꿔 보호자 화면에서 즉시 눈에 띄게 함.
+    """
+    now = datetime.now().isoformat()
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE outing_sessions SET last_checkin_at=?, last_checkin_status=? WHERE session_id=?",
+            (now, status, session_id),
+        )
+        if status == "need_help":
+            conn.execute(
+                "UPDATE outing_sessions SET status='need_help' WHERE session_id=?",
+                (session_id,),
+            )
+
+
+def get_active_outing(dependent_name: str):
+    """특정 이름의 진행중(in_progress/checked_in/need_help) 외출 세션 1건 조회"""
+    with get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM outing_sessions
+            WHERE dependent_name=? AND status IN ('in_progress','checked_in','need_help')
+            ORDER BY created_at DESC LIMIT 1
+            """,
+            (dependent_name,),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def get_all_active_outings():
+    """보호자 화면용: 진행중인 모든 외출 세션 조회 (최신순)"""
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM outing_sessions
+            WHERE status IN ('in_progress','checked_in','need_help')
+            ORDER BY created_at DESC
+            """
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_outing_by_id(session_id: int):
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM outing_sessions WHERE session_id=?", (session_id,)
+        ).fetchone()
+        return dict(row) if row else None

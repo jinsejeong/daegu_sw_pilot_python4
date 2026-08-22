@@ -15,9 +15,18 @@ from geo import REGION_CENTER, jitter_coords, haversine_km, format_distance
 
 
 def _parse_time(t_str: str) -> time:
-    """'09:00' -> time(9, 0)"""
-    h, m = map(int, t_str.split(":"))
-    return time(h, m)
+    """
+    'HH:MM' -> time(H, M) 변환.
+    실 API 데이터에 24시(2400) 같은 비정상 값이 섞여올 수 있어 방어적으로 처리한다.
+    파싱 실패/범위 초과 시 자정(00:00)으로 안전하게 대체한다.
+    """
+    try:
+        h, m = map(int, str(t_str).split(":"))
+        h = max(0, min(h, 23))
+        m = max(0, min(m, 59))
+        return time(h, m)
+    except (ValueError, AttributeError, TypeError):
+        return time(0, 0)
 
 
 def _get_availability(input_time: time, open_time: time, close_time: time) -> str:

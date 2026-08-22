@@ -77,20 +77,33 @@ def _extract_field(item: dict, *candidates, default=""):
 
 
 def _parse_time_field(raw, fallback: str) -> str:
-    """'09:00', '0900', '09시' 등 다양한 형태를 'HH:MM'으로 정규화 시도"""
+    """
+    '09:00', '0900', '09시' 등 다양한 형태를 'HH:MM'으로 정규화 시도.
+    24시(2400) 같은 비정상 값은 23:59로 안전하게 보정하고,
+    범위를 벗어나는 값은 fallback으로 대체한다.
+    """
     if not raw:
         return fallback
     raw = str(raw).strip().replace("시", ":").replace("분", "")
+
+    h, m = None, None
     if ":" in raw:
         parts = raw.split(":")
         try:
             h, m = int(parts[0]), int(parts[1][:2]) if len(parts) > 1 else 0
-            return f"{h:02d}:{m:02d}"
         except (ValueError, IndexError):
             return fallback
-    if raw.isdigit() and len(raw) == 4:
-        return f"{raw[:2]}:{raw[2:]}"
-    return fallback
+    elif raw.isdigit() and len(raw) == 4:
+        h, m = int(raw[:2]), int(raw[2:])
+    else:
+        return fallback
+
+    if h == 24:  # '2400'(자정까지 운영) 같은 표기 보정
+        h, m = 23, 59
+    if not (0 <= h <= 23 and 0 <= m <= 59):
+        return fallback
+
+    return f"{h:02d}:{m:02d}"
 
 
 def _normalize_item(item: dict, idx: int) -> dict:
